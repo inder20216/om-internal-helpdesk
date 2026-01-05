@@ -1,7 +1,7 @@
 export const msalConfig = {
   auth: {
     clientId: "9794cd80-12fe-4aef-9f61-269d26010a13",
-    authority: "https://login.microsoftonline.com/6fdaec79-e728-4214-a3c4-8f28e5839ffc",
+    authority: "https://login.microsoftonline.com/6fb82fad-19c7-41e5-b5e1-e7e1b02b0323",
     redirectUri: "https://inder20216.github.io/om-internal-helpdesk/",
   },
   cache: {
