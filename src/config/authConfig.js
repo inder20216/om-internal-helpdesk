@@ -1,8 +1,8 @@
 export const msalConfig = {
   auth: {
-    clientId: "9794cd80-12fe-4aef-9f61-269d26010a13", // Your Azure AD App Client ID
-    authority: "https://login.microsoftonline.com/6fb82fad-19c7-41e5-b5e1-e7e1b02b0323",
-    redirectUri: window.location.origin,
+    clientId: "9794cd80-12fe-4aef-9f61-269d26010a13",
+    authority: "https://login.microsoftonline.com/6fdaec79-e728-4214-a3c4-8f28e5839ffc",
+    redirectUri: window.location.origin + window.location.pathname,
   },
   cache: {
     cacheLocation: "sessionStorage",
@@ -22,5 +22,5 @@ export const graphConfig = {
 export const sharepointConfig = {
   siteUrl: "https://openmindservices.sharepoint.com/sites/InternalHelpdesk",
   listName: "Tickets Management",
-  listId: "", // Will be auto-detected
+  listId: "",
 };
