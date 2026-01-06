@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useMsal } from '@azure/msal-react';
-import { Bell, Calendar, TrendingUp, Clock, Edit3, CheckCircle, AlertCircle, Menu, X, RefreshCw } from 'lucide-react';
-import { PieChart, Pie, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Bell, Calendar, TrendingUp, Clock, Edit3, CheckCircle, AlertCircle, Menu, X, RefreshCw, FileText, Filter } from 'lucide-react';
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Legend } from 'recharts';
 import { format, subDays } from 'date-fns';
 import toast, { Toaster } from 'react-hot-toast';
 import sharepointService from '../services/sharepointService';
 import { loginRequest } from '../config/authConfig';
 import StatusDetailsModal from './StatusDetailsModal';
 
-// Light theme colors - Handle ALL status variations
+// Professional color palette
 const COLORS = {
   priority: {
     'High': '#ef4444',
@@ -25,7 +25,7 @@ const COLORS = {
     'Resolved': '#10b981',
     'Closed': '#6b7280'
   },
-  reasons: '#4f46e5'
+  chart: ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1']
 };
 
 const Dashboard = ({ department }) => {
@@ -37,9 +37,13 @@ const Dashboard = ({ department }) => {
   const [showFilters, setShowFilters] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   
-  // Filters
-  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
+  // Filters - Default to CURRENT MONTH
+  const [startDate, setStartDate] = useState(() => {
+    const now = new Date();
+    return format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+  });
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [statusFilter, setStatusFilter] = useState('All');
 
   // Modal state
   const [statusDetailsModal, setStatusDetailsModal] = useState({
@@ -52,57 +56,81 @@ const Dashboard = ({ department }) => {
     total: 0,
     resolved: 0,
     pending: 0,
+    open: 0,
+    inProgress: 0,
+    closed: 0,
     avgResolution: '0',
     byPriority: [],
-    byReason: [],
-    byStatus: []
+    byStatus: [],
+    byReason: []
   });
 
   // Fetch data
-  const fetchData = async (showRefreshToast = false) => {
+  const fetchData = async (showToast = true) => {
+    if (showToast) setRefreshing(true);
+    
     try {
-      if (showRefreshToast) setRefreshing(true);
-      
-      const response = await instance.acquireTokenSilent({
+      const tokenResponse = await instance.acquireTokenSilent({
         ...loginRequest,
-        account: accounts[0],
+        account: accounts[0]
       });
-      
-      sharepointService.setAccessToken(response.accessToken);
-      
+
+      sharepointService.setAccessToken(tokenResponse.accessToken);
+
       const data = await sharepointService.getTickets({
         department: department,
-        startDate,
-        endDate
+        startDate: startDate,
+        endDate: endDate
       });
 
-      // Check for new tickets
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      const newTickets = data.filter(t => new Date(t.createdDate) > fiveMinutesAgo);
-      if (newTickets.length > newTicketCount) {
-        toast.success(`${newTickets.length} new ticket(s)!`, {
-          icon: '🔔',
-          duration: 3000,
-        });
-      }
-      setNewTicketCount(newTickets.length);
+      const previousCount = tickets.length;
+      const newCount = data.length;
 
       setTickets(data);
-      setFilteredTickets(data);
-      calculateStats(data);
       
+      // Apply status filter
+      applyStatusFilter(data, statusFilter);
+
+      if (newCount > previousCount && previousCount > 0) {
+        const diff = newCount - previousCount;
+        setNewTicketCount(diff);
+        toast.success(`${diff} new ticket${diff > 1 ? 's' : ''} added!`);
+      }
+
+      const calculatedStats = calculateStats(data);
+      setStats(calculatedStats);
       setLoading(false);
       setRefreshing(false);
-      
-      if (showRefreshToast) {
-        toast.success('✅ Refreshed!', { duration: 1500 });
-      }
     } catch (error) {
       console.error('Error:', error);
       toast.error('Failed to load tickets');
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  // Apply status filter
+  const applyStatusFilter = (data, filter) => {
+    if (filter === 'All') {
+      setFilteredTickets(data);
+    } else {
+      const filtered = data.filter(t => {
+        const status = t.status?.toLowerCase() || '';
+        const filterLower = filter.toLowerCase();
+        
+        if (filterLower === 'in progress') {
+          return status === 'in progress' || status === 'in-progress';
+        }
+        return status === filterLower;
+      });
+      setFilteredTickets(filtered);
+    }
+  };
+
+  // Handle status filter change
+  const handleStatusFilterChange = (newFilter) => {
+    setStatusFilter(newFilter);
+    applyStatusFilter(tickets, newFilter);
   };
 
   useEffect(() => {
@@ -113,25 +141,31 @@ const Dashboard = ({ department }) => {
     }
   }, [accounts, startDate, endDate, department]);
 
-  // Normalize status for display and grouping
-  const normalizeStatus = (status) => {
-    if (!status) return 'Unknown';
-    const lower = status.toLowerCase();
-    if (lower === 'in-progress') return 'In Progress';
-    if (lower === 'new') return 'Open';
-    return status;
-  };
-
-  // Calculate statistics
+  // Calculate statistics with status breakdown
   const calculateStats = (data) => {
     const resolvedCount = data.filter(t => {
-      const status = normalizeStatus(t.status)?.toLowerCase() || '';
+      const status = t.status?.toLowerCase() || '';
       return status === 'resolved' || status === 'closed';
     }).length;
     
     const pendingCount = data.filter(t => {
-      const status = normalizeStatus(t.status)?.toLowerCase() || '';
-      return status === 'pending' || status === 'open' || status === 'in progress';
+      const status = t.status?.toLowerCase() || '';
+      return status === 'new';
+    }).length;
+
+    const openCount = data.filter(t => {
+      const status = t.status?.toLowerCase() || '';
+      return status === 'open';
+    }).length;
+
+    const inProgressCount = data.filter(t => {
+      const status = t.status?.toLowerCase() || '';
+      return status === 'in progress' || status === 'in-progress';
+    }).length;
+
+    const closedCount = data.filter(t => {
+      const status = t.status?.toLowerCase() || '';
+      return status === 'closed';
     }).length;
 
     // Group by priority
@@ -145,12 +179,12 @@ const Dashboard = ({ department }) => {
     // Group by status
     const statusGroups = {};
     data.forEach(ticket => {
-      const status = normalizeStatus(ticket.status);
+      const status = ticket.status || 'Unknown';
       statusGroups[status] = (statusGroups[status] || 0) + 1;
     });
     const byStatus = Object.entries(statusGroups).map(([name, value]) => ({ name, value }));
 
-    // Group by reason
+    // Group by reason - TOP 10
     const reasonGroups = {};
     data.forEach(ticket => {
       if (ticket.ticketReason && ticket.ticketReason.trim()) {
@@ -161,27 +195,33 @@ const Dashboard = ({ department }) => {
     const byReason = Object.entries(reasonGroups)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
+      .slice(0, 10);
 
-    setStats({
+    const avgResolution = sharepointService.calculateAvgResolutionTime(data);
+
+    return {
       total: data.length,
       resolved: resolvedCount,
       pending: pendingCount,
-      avgResolution: sharepointService.calculateAvgResolutionTime(data),
+      open: openCount,
+      inProgress: inProgressCount,
+      closed: closedCount,
+      avgResolution,
       byPriority,
-      byReason,
-      byStatus
-    });
+      byStatus,
+      byReason
+    };
   };
 
   // Handle status update
   const handleStatusUpdate = async (ticketId, newStatus) => {
     try {
       await sharepointService.updateTicketStatus(ticketId, newStatus);
-      toast.success('✅ Updated!', { duration: 1500 });
-      fetchData();
+      toast.success('✅ Updated!');
+      fetchData(false);
     } catch (error) {
-      toast.error('Failed to update');
+      console.error('Error updating status:', error);
+      toast.error('Failed to update status');
     }
   };
 
@@ -189,418 +229,416 @@ const Dashboard = ({ department }) => {
   const handleStatusDetailsUpdate = async (ticketId, statusDetails) => {
     try {
       await sharepointService.updateStatusDetails(ticketId, statusDetails);
-      toast.success('✅ Details updated!', { duration: 1500 });
-      fetchData();
+      toast.success('✅ Details updated!');
+      setStatusDetailsModal({ isOpen: false, ticket: null });
+      fetchData(false);
     } catch (error) {
-      toast.error('Failed to update');
-      throw error;
+      console.error('Error updating status details:', error);
+      toast.error('Failed to update details');
     }
   };
 
-  const openStatusDetailsModal = (ticket) => {
-    setStatusDetailsModal({ isOpen: true, ticket: ticket });
-  };
-
-  const closeStatusDetailsModal = () => {
-    setStatusDetailsModal({ isOpen: false, ticket: null });
-  };
-
-  // Priority badge color
-  const getPriorityColor = (priority) => {
-    switch (priority?.toLowerCase()) {
-      case 'high': return 'bg-red-100 text-red-700 border-red-300';
-      case 'normal': return 'bg-yellow-100 text-yellow-700 border-yellow-300';
-      case 'low': return 'bg-green-100 text-green-700 border-green-300';
-      default: return 'bg-gray-100 text-gray-700 border-gray-300';
-    }
-  };
-
-  // Status badge color
+  // Get status badge color
   const getStatusColor = (status) => {
-    if (!status) return 'bg-gray-100 text-gray-700 border-gray-300';
-    const normalized = normalizeStatus(status);
-    const statusLower = normalized.toLowerCase();
-    
-    if (statusLower === 'resolved' || statusLower === 'closed') {
-      return 'bg-green-100 text-green-700 border-green-300';
-    } else if (statusLower === 'in progress') {
-      return 'bg-blue-100 text-blue-700 border-blue-300';
-    } else if (statusLower === 'pending' || statusLower?.includes('observation')) {
-      return 'bg-purple-100 text-purple-700 border-purple-300';
-    } else if (statusLower === 'open') {
-      return 'bg-orange-100 text-orange-700 border-orange-300';
-    }
-    return 'bg-gray-100 text-gray-700 border-gray-300';
+    const lower = status?.toLowerCase() || '';
+    if (lower === 'resolved') return 'bg-green-100 text-green-800';
+    if (lower === 'in progress' || lower === 'in-progress') return 'bg-orange-100 text-orange-800';
+    if (lower === 'pending') return 'bg-purple-100 text-purple-800';
+    if (lower === 'open' || lower === 'new') return 'bg-blue-100 text-blue-800';
+    if (lower === 'closed') return 'bg-gray-100 text-gray-800';
+    if (lower.includes('partially')) return 'bg-purple-100 text-purple-800';
+    return 'bg-gray-100 text-gray-800';
   };
 
-  // Custom Tooltip
-  const CustomTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-2 sm:p-3 border border-gray-300 rounded-lg shadow-lg text-xs sm:text-sm">
-          <p className="font-bold text-gray-800">{payload[0].name}</p>
-          <p className="text-gray-600">Count: <span className="font-bold">{payload[0].value}</span></p>
-          <p className="text-gray-600">
-            {((payload[0].value / stats.total) * 100).toFixed(1)}%
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // Custom Legend
-  const CustomLegend = ({ payload }) => {
-    return (
-      <div className="flex flex-wrap justify-center gap-2 sm:gap-3 mt-3 sm:mt-4 px-2">
-        {payload.map((entry, index) => (
-          <div key={`legend-${index}`} className="flex items-center gap-1 sm:gap-2">
-            <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-            <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
-              {entry.value}: {entry.payload.value}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
+  // Get priority badge color
+  const getPriorityColor = (priority) => {
+    if (priority === 'High') return 'bg-red-100 text-red-800';
+    if (priority === 'Low') return 'bg-green-100 text-green-800';
+    return 'bg-yellow-100 text-yellow-800';
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 sm:h-16 sm:w-16 border-b-4 border-indigo-600 mx-auto"></div>
-          <p className="mt-4 text-gray-700 font-medium text-sm sm:text-base">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading tickets...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-100">
-      <Toaster position="top-center" toastOptions={{ style: { fontSize: '14px' } }} />
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
+      <Toaster position="top-right" />
       
-      {/* Mobile-Optimized Header */}
-      <div className="bg-white shadow-lg border-b-4 border-indigo-600 sticky top-0 z-50">
-        <div className="px-4 sm:px-6 py-3 sm:py-4">
-          {/* Top Row: Title & Actions */}
-          <div className="flex items-center justify-between mb-2 sm:mb-3">
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent truncate">
-                Open Mind's Internal Helpdesk
-              </h1>
-              <p className="text-xs text-gray-600 mt-0.5 truncate">
-                {department}
-              </p>
-            </div>
+      {/* PROFESSIONAL HEADER */}
+      <div className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
+          {/* Single Row - 3 Columns */}
+          <div className="flex items-center justify-between gap-6">
             
-            <div className="flex items-center gap-2 sm:gap-3">
+            {/* LEFT: Logo + Titles */}
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <img 
+                src="https://raw.githubusercontent.com/inder20216/openmind-assets/main/logo.png" 
+                alt="Open Mind" 
+                className="h-10 w-auto flex-shrink-0"
+                onError={(e) => e.target.style.display = 'none'}
+              />
+              <div className="min-w-0">
+                <h1 className="text-lg font-semibold text-gray-900 truncate">
+                  Internal Helpdesk Dashboard
+                </h1>
+                <p className="text-sm text-gray-500 truncate">
+                  Team – {department}
+                </p>
+              </div>
+            </div>
+
+            {/* CENTER: Filters */}
+            <div className="hidden lg:flex items-center gap-3 flex-shrink-0">
+              {/* Date Range */}
+              <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                <Calendar className="w-4 h-4 text-gray-400" />
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="text-sm border-0 bg-transparent focus:outline-none focus:ring-0 w-32"
+                />
+                <span className="text-gray-400 text-sm">→</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="text-sm border-0 bg-transparent focus:outline-none focus:ring-0 w-32"
+                />
+              </div>
+
+              {/* Status Filter */}
+              <select
+                value={statusFilter}
+                onChange={(e) => handleStatusFilterChange(e.target.value)}
+                className="text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="All">All Statuses</option>
+                <option value="New">New</option>
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+              </select>
+            </div>
+
+            {/* RIGHT: User + Actions */}
+            <div className="flex items-center gap-3 flex-shrink-0">
+              {/* User Name */}
+              <div className="hidden md:block text-right">
+                <p className="text-sm font-medium text-gray-700">
+                  {accounts[0]?.name || accounts[0]?.username || 'User'}
+                </p>
+                <p className="text-xs text-gray-500">Logged in</p>
+              </div>
+
               {/* Refresh Button */}
               <button
                 onClick={() => fetchData(true)}
                 disabled={refreshing}
-                className="p-2 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
-                title="Refresh"
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Refresh data"
               >
-                <RefreshCw className={`w-5 h-5 text-indigo-600 ${refreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-5 h-5 text-gray-600 ${refreshing ? 'animate-spin' : ''}`} />
               </button>
-              
-              {/* Notification */}
-              <div className="relative">
-                <Bell className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600" />
+
+              {/* Notification Bell */}
+              <button className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <Bell className="w-5 h-5 text-gray-600" />
                 {newTicketCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center font-bold animate-pulse">
+                  <span className="absolute top-0 right-0 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
                     {newTicketCount}
                   </span>
                 )}
-              </div>
-              
-              {/* Filter Toggle (Mobile) */}
+              </button>
+
+              {/* Mobile Menu Toggle */}
               <button
                 onClick={() => setShowFilters(!showFilters)}
-                className="sm:hidden p-2 bg-gray-100 rounded-lg"
+                className="lg:hidden p-2 hover:bg-gray-100 rounded-lg"
               >
                 {showFilters ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             </div>
           </div>
 
-          {/* Date Filters - Desktop Always Visible, Mobile Collapsible */}
-          <div className={`${showFilters ? 'block' : 'hidden'} sm:block`}>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-gray-50 p-3 rounded-lg border border-gray-200">
-              <Calendar className="hidden sm:block w-4 h-4 text-indigo-600 flex-shrink-0" />
-              <div className="flex items-center gap-2 flex-1">
+          {/* Mobile Filters */}
+          {showFilters && (
+            <div className="lg:hidden mt-3 pt-3 border-t border-gray-200 space-y-2">
+              <div className="flex items-center gap-2">
                 <input
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="flex-1 text-sm text-gray-700 bg-white border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2"
                 />
-                <span className="text-gray-400 text-sm">to</span>
+                <span className="text-gray-400">→</span>
                 <input
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="flex-1 text-sm text-gray-700 bg-white border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2"
                 />
               </div>
+              <select
+                value={statusFilter}
+                onChange={(e) => handleStatusFilterChange(e.target.value)}
+                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+              >
+                <option value="All">All Statuses</option>
+                <option value="New">New</option>
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+              </select>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto">
-        {/* Stats Cards - Responsive Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
-          {/* Total Tickets */}
-          <div className="bg-white rounded-xl shadow-md border border-gray-200 p-3 sm:p-4 hover:shadow-lg transition-shadow">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center mb-2">
-              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        {/* Executive Stats Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+          {[
+            { label: 'Total', value: stats.total, icon: TrendingUp, color: 'from-slate-500 to-slate-600', filter: 'All' },
+            { label: 'Resolved', value: stats.resolved, icon: CheckCircle, color: 'from-green-500 to-emerald-600', filter: 'Resolved' },
+            { label: 'New', value: stats.pending, icon: AlertCircle, color: 'from-blue-500 to-cyan-600', filter: 'New' },
+            { label: 'Open', value: stats.open, icon: FileText, color: 'from-sky-500 to-blue-600', filter: 'Open' },
+            { label: 'In Progress', value: stats.inProgress, icon: Clock, color: 'from-orange-500 to-amber-600', filter: 'In Progress' },
+            { label: 'Avg Time', value: `${stats.avgResolution}h`, icon: Clock, color: 'from-violet-500 to-purple-600', filter: null },
+          ].map((stat, index) => (
+            <div
+              key={index}
+              onClick={() => stat.filter && handleStatusFilterChange(stat.filter)}
+              className={`bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-all ${stat.filter ? 'cursor-pointer' : ''}`}
+            >
+              <div className={`w-10 h-10 bg-gradient-to-br ${stat.color} rounded-lg flex items-center justify-center mb-3`}>
+                <stat.icon className="w-5 h-5 text-white" />
+              </div>
+              <p className="text-xs font-medium text-gray-500 mb-1">{stat.label}</p>
+              <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
             </div>
-            <p className="text-xs font-medium text-gray-600 mb-1">Total</p>
-            <p className="text-2xl sm:text-3xl font-bold text-gray-800">{stats.total}</p>
-          </div>
-
-          {/* Resolved */}
-          <div className="bg-white rounded-xl shadow-md border border-gray-200 p-3 sm:p-4 hover:shadow-lg transition-shadow">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center mb-2">
-              <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-            </div>
-            <p className="text-xs font-medium text-gray-600 mb-1">Resolved</p>
-            <p className="text-2xl sm:text-3xl font-bold text-gray-800">{stats.resolved}</p>
-          </div>
-
-          {/* Pending */}
-          <div className="bg-white rounded-xl shadow-md border border-gray-200 p-3 sm:p-4 hover:shadow-lg transition-shadow">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center mb-2">
-              <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-            </div>
-            <p className="text-xs font-medium text-gray-600 mb-1">Pending</p>
-            <p className="text-2xl sm:text-3xl font-bold text-gray-800">{stats.pending}</p>
-          </div>
-
-          {/* Avg Resolution */}
-          <div className="bg-white rounded-xl shadow-md border border-gray-200 p-3 sm:p-4 hover:shadow-lg transition-shadow">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-lg flex items-center justify-center mb-2">
-              <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-            </div>
-            <p className="text-xs font-medium text-gray-600 mb-1">Avg Time</p>
-            <p className="text-2xl sm:text-3xl font-bold text-gray-800">{stats.avgResolution}<span className="text-base sm:text-xl">h</span></p>
-          </div>
+          ))}
         </div>
 
-        {/* Charts - Stack on Mobile */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
+        {/* Charts - 2 charts side by side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           {/* Priority Chart */}
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4">Priority</h3>
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Priority Distribution</h3>
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
                 <Pie
                   data={stats.byPriority}
                   cx="50%"
-                  cy="40%"
-                  outerRadius={60}
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"
-                  label={false}
                 >
                   {stats.byPriority.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS.priority[entry.name] || COLORS.priority.Normal} />
+                    <Cell key={`cell-${index}`} fill={COLORS.priority[entry.name] || '#6b7280'} />
                   ))}
                 </Pie>
-                <Tooltip content={<CustomTooltip />} />
-                <Legend content={<CustomLegend />} />
+                <Tooltip />
               </PieChart>
             </ResponsiveContainer>
           </div>
 
-          {/* Status Chart */}
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
-            <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4">Status</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={stats.byStatus}
-                  cx="50%"
-                  cy="40%"
-                  outerRadius={60}
-                  fill="#8884d8"
-                  dataKey="value"
-                  label={false}
-                >
-                  {stats.byStatus.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS.status[entry.name] || COLORS.status['Open']} />
-                  ))}
-                </Pie>
-                <Tooltip content={<CustomTooltip />} />
-                <Legend content={<CustomLegend />} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Top Reasons */}
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6 md:col-span-2 lg:col-span-1">
-            <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4">Top Reasons</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={stats.byReason} layout="vertical">
+          {/* Top 10 Reasons - VERTICAL COLUMN CHART */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Top 10 Ticket Reasons</h3>
+            <ResponsiveContainer width="100%" height={380}>
+              <BarChart data={stats.byReason} margin={{ bottom: 140, left: 10, right: 10, top: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis type="number" stroke="#6b7280" style={{ fontSize: '11px' }} />
-                <YAxis 
+                <XAxis 
                   dataKey="name" 
-                  type="category" 
-                  width={80} 
-                  stroke="#6b7280" 
-                  style={{ fontSize: '10px' }}
-                  tick={{ fill: '#1f2937' }}
+                  angle={-50}
+                  textAnchor="end"
+                  height={120}
+                  interval={0}
+                  tick={{ fontSize: 9, fill: '#374151' }}
                 />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="value" fill={COLORS.reasons} radius={[0, 6, 6, 0]} />
+                <YAxis 
+                  tick={{ fontSize: 11, fill: '#6b7280' }}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '12px' }}
+                  labelStyle={{ fontWeight: 600, color: '#111827' }}
+                />
+                <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]}>
+                  {stats.byReason.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS.chart[index % COLORS.chart.length]} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Tickets List - Mobile Optimized Cards */}
-        <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-          <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white flex items-center justify-between">
-            <h3 className="text-base sm:text-xl font-bold">Recent Tickets</h3>
-            <span className="bg-white text-indigo-600 px-3 py-1 rounded-full text-xs sm:text-sm font-bold">
+        {/* Tickets List */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-800">
+              {statusFilter === 'All' ? 'Recent Tickets' : `${statusFilter} Tickets`}
+            </h2>
+            <span className="bg-indigo-100 text-indigo-800 text-sm font-medium px-3 py-1 rounded-full">
               {filteredTickets.length}
             </span>
           </div>
 
-          {/* Mobile: Card View, Desktop: Table */}
-          <div className="divide-y divide-gray-200">
-            {/* Desktop Table */}
-            <div className="hidden lg:block overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b-2 border-gray-200">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Ticket</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Reason</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Priority</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Raised By</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {filteredTickets.slice(0, 50).map((ticket, index) => {
-                    const displayStatus = normalizeStatus(ticket.status);
-                    return (
-                      <tr key={ticket.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50`}>
-                        <td className="px-4 py-3 text-sm font-bold text-indigo-600">{ticket.ticketId || '-'}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-xs truncate">{ticket.ticketTitle || ticket.title}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700 max-w-xs truncate">{ticket.ticketReason || 'No reason'}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold border ${getPriorityColor(ticket.priority)}`}>
-                            {ticket.priority || 'Normal'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <select
-                            value={displayStatus}
-                            onChange={(e) => handleStatusUpdate(ticket.id, e.target.value)}
-                            className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer border ${getStatusColor(displayStatus)} focus:outline-none focus:ring-2 focus:ring-indigo-500`}
-                          >
-                            <option>Open</option>
-                            <option>In Progress</option>
-                            <option>Pending</option>
-                            <option>Partially Resolved - Under Observation</option>
-                            <option>Resolved</option>
-                            <option>Closed</option>
-                          </select>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{ticket.ticketRaisedBy || 'Not specified'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{format(new Date(ticket.createdDate), 'dd-MM-yyyy')}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile/Tablet Card View */}
-            <div className="lg:hidden">
-              {filteredTickets.slice(0, 50).map((ticket) => {
-                const displayStatus = normalizeStatus(ticket.status);
-                return (
-                  <div key={ticket.id} className="p-4 hover:bg-gray-50 transition-colors">
-                    {/* Header Row */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-bold text-indigo-600">{ticket.ticketId || '-'}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${getPriorityColor(ticket.priority)}`}>
-                            {ticket.priority || 'Normal'}
-                          </span>
-                        </div>
-                        <h4 className="text-sm font-bold text-gray-900 line-clamp-2 mb-1">
-                          {ticket.ticketTitle || ticket.title}
-                        </h4>
-                        <p className="text-xs text-gray-600 line-clamp-1">
-                          {ticket.ticketReason || 'No reason'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => openStatusDetailsModal(ticket)}
-                        className="ml-2 p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg flex-shrink-0"
+          {/* Desktop Table */}
+          <div className="hidden lg:block overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ticket</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status Details</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Raised By</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredTickets.map((ticket) => (
+                  <tr key={ticket.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm font-medium text-indigo-600">{ticket.ticketId}</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-medium text-gray-900">{ticket.ticketTitle}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-gray-600 max-w-xs truncate">{ticket.ticketReason}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getPriorityColor(ticket.priority)}`}>
+                        {ticket.priority}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <select
+                        value={ticket.status}
+                        onChange={(e) => handleStatusUpdate(ticket.id, e.target.value)}
+                        className={`text-sm px-3 py-1.5 rounded-full font-medium border-0 focus:ring-2 focus:ring-indigo-500 cursor-pointer ${getStatusColor(ticket.status)}`}
                       >
-                        <Edit3 className="w-4 h-4" />
+                        <option value="New">New</option>
+                        <option value="Open">Open</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Partially Resolved - Under Observation">Partially Resolved</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Closed">Closed</option>
+                      </select>
+                    </td>
+                    <td className="px-6 py-4">
+                      <button
+                        onClick={() => setStatusDetailsModal({ isOpen: true, ticket })}
+                        className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 transition-colors"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        {ticket.statusDetails ? (
+                          <span className="max-w-[200px] truncate">{ticket.statusDetails}</span>
+                        ) : (
+                          <span className="text-gray-400">Add details</span>
+                        )}
                       </button>
-                    </div>
-
-                    {/* Info Grid */}
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div>
-                        <p className="text-xs text-gray-500 mb-0.5">Raised By</p>
-                        <p className="text-sm font-medium text-gray-700 truncate">
-                          {ticket.ticketRaisedBy || 'Not specified'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 mb-0.5">Date</p>
-                        <p className="text-sm font-medium text-gray-700">
-                          {format(new Date(ticket.createdDate), 'dd-MM-yyyy')}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Status Dropdown */}
-                    <select
-                      value={displayStatus}
-                      onChange={(e) => handleStatusUpdate(ticket.id, e.target.value)}
-                      className={`w-full px-3 py-2 rounded-lg text-sm font-bold cursor-pointer border ${getStatusColor(displayStatus)} focus:outline-none focus:ring-2 focus:ring-indigo-500`}
-                    >
-                      <option>Open</option>
-                      <option>In Progress</option>
-                      <option>Pending</option>
-                      <option>Partially Resolved - Under Observation</option>
-                      <option>Resolved</option>
-                      <option>Closed</option>
-                    </select>
-
-                    {/* Status Details Preview */}
-                    {ticket.statusDetails && (
-                      <div className="mt-2 text-xs text-gray-600 line-clamp-2 bg-gray-50 p-2 rounded">
-                        {ticket.statusDetails}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{ticket.ticketRaisedBy}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {format(new Date(ticket.createdDate), 'dd-MM-yyyy')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+
+          {/* Mobile Card View */}
+          <div className="lg:hidden divide-y divide-gray-200">
+            {filteredTickets.map((ticket) => (
+              <div key={ticket.id} className="p-4 hover:bg-gray-50 transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-indigo-600">{ticket.ticketId}</span>
+                    <span className={`ml-2 px-2 py-0.5 inline-flex text-xs font-semibold rounded-full ${getPriorityColor(ticket.priority)}`}>
+                      {ticket.priority}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setStatusDetailsModal({ isOpen: true, ticket })}
+                    className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <Edit3 className="w-4 h-4 text-gray-400" />
+                  </button>
+                </div>
+                
+                <h3 className="font-medium text-gray-900 mb-2">{ticket.ticketTitle}</h3>
+                <p className="text-sm text-gray-600 mb-3">{ticket.ticketReason}</p>
+                
+                <div className="flex items-center justify-between text-sm mb-3">
+                  <span className="text-gray-500">Raised By:</span>
+                  <span className="font-medium text-gray-900">{ticket.ticketRaisedBy}</span>
+                </div>
+
+                <div className="flex items-center justify-between text-sm mb-3">
+                  <span className="text-gray-500">Date:</span>
+                  <span className="text-gray-700">{format(new Date(ticket.createdDate), 'dd-MM-yyyy')}</span>
+                </div>
+
+                <div className="mb-3">
+                  <select
+                    value={ticket.status}
+                    onChange={(e) => handleStatusUpdate(ticket.id, e.target.value)}
+                    className={`w-full text-sm px-3 py-2 rounded-lg font-medium border-0 focus:ring-2 focus:ring-indigo-500 ${getStatusColor(ticket.status)}`}
+                  >
+                    <option value="New">New</option>
+                    <option value="Open">Open</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Partially Resolved - Under Observation">Partially Resolved</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Closed">Closed</option>
+                  </select>
+                </div>
+
+                {ticket.statusDetails && (
+                  <div className="text-sm text-gray-600 bg-gray-50 p-2 rounded border border-gray-200">
+                    {ticket.statusDetails}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {filteredTickets.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500">No tickets found for the selected filter.</p>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Status Details Modal */}
       <StatusDetailsModal
-        ticket={statusDetailsModal.ticket}
         isOpen={statusDetailsModal.isOpen}
-        onClose={closeStatusDetailsModal}
+        ticket={statusDetailsModal.ticket}
+        onClose={() => setStatusDetailsModal({ isOpen: false, ticket: null })}
         onSave={handleStatusDetailsUpdate}
       />
     </div>

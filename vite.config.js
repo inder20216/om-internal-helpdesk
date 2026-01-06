@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: '/om-internal-helpdesk/',
+  base: process.env.NODE_ENV === 'production' ? '/om-internal-helpdesk/' : '/',
   plugins: [react()],
   server: {
     port: 3000,

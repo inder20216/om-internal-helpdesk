@@ -6,6 +6,7 @@ class SharePointService {
     this.listId = null;
     this.accessToken = null;
     this.userInfoListId = null;
+    this.userCache = {}; // Cache user names to avoid repeated API calls
   }
 
   setAccessToken(token) {
@@ -79,6 +80,11 @@ class SharePointService {
   }
 
   async getUserName(lookupId) {
+    // Check cache first
+    if (this.userCache[lookupId]) {
+      return this.userCache[lookupId];
+    }
+
     try {
       const siteId = await this.getSiteId();
       const userInfoListId = await this.getUserInfoListId();
@@ -90,11 +96,22 @@ class SharePointService {
       const url = `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${userInfoListId}/items/${lookupId}?$expand=fields`;
       const response = await axios.get(url, { headers: this.getHeaders() });
       
-      return response.data.fields.Title || 
-             response.data.fields.Name || 
-             response.data.fields.EMail ||
-             null;
+      const fields = response.data.fields;
+      
+      // Priority order: Title (display name) > UserName > Name > Email username
+      const userName = fields.Title || 
+                       fields.UserName || 
+                       fields.Name || 
+                       (fields.EMail ? fields.EMail.split('@')[0] : null);
+      
+      // Cache the result
+      if (userName) {
+        this.userCache[lookupId] = userName;
+      }
+      
+      return userName;
     } catch (error) {
+      console.log(`⚠️ Could not fetch user ${lookupId}`);
       return null;
     }
   }
@@ -111,6 +128,7 @@ class SharePointService {
       const response = await axios.get(url, { headers: this.getHeaders() });
       console.log(`📊 Retrieved ${response.data.value.length} items`);
       
+      // Get unique author IDs
       const authorIds = [...new Set(
         response.data.value
           .map(item => item.fields.AuthorLookupId)
@@ -119,8 +137,9 @@ class SharePointService {
       
       console.log(`👥 Found ${authorIds.length} unique users, fetching names...`);
       
+      // Fetch up to 100 user names (increased from 30)
       const userNames = {};
-      const idsToFetch = authorIds.slice(0, 30);
+      const idsToFetch = authorIds.slice(0, 100);
       
       for (const id of idsToFetch) {
         const name = await this.getUserName(id);
@@ -134,13 +153,15 @@ class SharePointService {
       const tickets = response.data.value.map((item) => {
         const fields = item.fields;
         
+        // Determine ticket raised by - NEVER show "User ID: X" to leadership
         let ticketRaisedBy = '';
         if (fields.AuthorLookupId && userNames[fields.AuthorLookupId]) {
           ticketRaisedBy = userNames[fields.AuthorLookupId];
         } else if (fields.AuthorLookupId) {
-          ticketRaisedBy = `User ID: ${fields.AuthorLookupId}`;
+          // Fallback: show as "User #62" instead of "User ID: 62" (cleaner for executive view)
+          ticketRaisedBy = `User #${fields.AuthorLookupId}`;
         } else {
-          ticketRaisedBy = 'Not specified';
+          ticketRaisedBy = 'Unknown';
         }
         
         const ticketId = fields.TicketID || fields.Ticket_x0020_ID || '';
