@@ -1,124 +1,145 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, FileText } from 'lucide-react';
+import { X, AlertCircle, Save } from 'lucide-react';
 
-const StatusDetailsModal = ({ ticket, isOpen, onClose, onSave }) => {
+const StatusDetailsModal = ({ isOpen, ticket, onClose, onSave }) => {
   const [statusDetails, setStatusDetails] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Reset statusDetails when ticket changes
   useEffect(() => {
-    if (ticket) {
+    if (ticket && isOpen) {
       setStatusDetails(ticket.statusDetails || '');
     }
-  }, [ticket]);
+  }, [ticket, isOpen]);
+
+  if (!isOpen || !ticket) return null;
 
   const handleSave = async () => {
+    console.log('🔍 SAVING STATUS DETAILS:');
+    console.log('  Ticket ID Field:', ticket.ticketId);
+    console.log('  SharePoint Item ID:', ticket.id);
+    console.log('  Current Status Details:', ticket.statusDetails);
+    console.log('  New Status Details:', statusDetails);
+    
     setSaving(true);
     try {
       await onSave(ticket.id, statusDetails);
       onClose();
     } catch (error) {
-      console.error('Error saving status details:', error);
+      console.error('Error saving:', error);
     } finally {
       setSaving(false);
     }
   };
 
-  if (!isOpen || !ticket) return null;
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-gray-200 animate-slideUp">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-              <FileText className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-bold text-white">Edit Status Details</h3>
-              <p className="text-sm text-blue-100 mt-1">{ticket?.ticketTitle || ticket?.title}</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-all"
-          >
-            <X className="w-6 h-6" />
-          </button>
-        </div>
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" onClick={onClose}></div>
 
-        {/* Content */}
-        <div className="p-6">
-          {/* Ticket Info */}
-          <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="font-semibold text-gray-700">Department:</span>
-                <span className="ml-2 text-gray-900">{ticket.department}</span>
+      {/* Modal */}
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="relative bg-white rounded-2xl shadow-2xl max-w-3xl w-full mx-auto">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-5 rounded-t-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center">
+                  <AlertCircle className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-white">Edit Status Details</h2>
+                  <p className="text-sm text-indigo-100">{ticket.ticketTitle}</p>
+                </div>
               </div>
-              <div>
-                <span className="font-semibold text-gray-700">Priority:</span>
-                <span className={`ml-2 px-2 py-1 rounded text-xs font-bold ${
-                  ticket.priority === 'High' ? 'bg-red-100 text-red-700' :
-                  ticket.priority === 'Normal' ? 'bg-orange-100 text-orange-700' :
-                  'bg-green-100 text-green-700'
-                }`}>
-                  {ticket.priority}
-                </span>
-              </div>
-              <div>
-                <span className="font-semibold text-gray-700">Status:</span>
-                <span className="ml-2 text-gray-900">{ticket.status}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-gray-700">Raised By:</span>
-                <span className="ml-2 text-gray-900">{ticket.TicketRaisedBy || ticket.ticketRaisedBy || '-'}</span>
-              </div>
+              <button
+                onClick={onClose}
+                className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
             </div>
           </div>
 
-          {/* Status Details Input */}
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Status Details / Remarks
-          </label>
-          <textarea
-            value={statusDetails}
-            onChange={(e) => setStatusDetails(e.target.value)}
-            rows={8}
-            className="w-full px-4 py-3 bg-gray-50 border border-gray-300 text-gray-900 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none transition-all"
-            placeholder="Enter status details, remarks, or updates...
+          {/* Content */}
+          <div className="p-6">
+            {/* Ticket Info Grid */}
+           <div className="grid grid-cols-3 gap-3 mb-4 bg-indigo-50 p-3 rounded-lg text-sm">
+  <div>
+    <p className="text-xs text-gray-600 mb-0.5">Ticket ID:</p>
+    <p className="font-semibold text-indigo-600">{ticket.ticketId}</p>
+  </div>
+  <div>
+    <p className="text-xs text-gray-600 mb-0.5">Status:</p>
+    <p className="font-semibold text-gray-900">{ticket.status}</p>
+  </div>
+  <div>
+    <p className="text-xs text-gray-600 mb-0.5">Priority:</p>
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+      ticket.priority === 'High' ? 'bg-red-100 text-red-800' :
+      ticket.priority === 'Low' ? 'bg-green-100 text-green-800' :
+      'bg-yellow-100 text-yellow-800'
+    }`}>
+      {ticket.priority}
+    </span>
+  </div>
+  <div className="col-span-2">
+    <p className="text-xs text-gray-600 mb-0.5">Raised By:</p>
+    <p className="font-semibold text-gray-900">{ticket.ticketRaisedBy}</p>
+  </div>
+  <div>
+    <p className="text-xs text-gray-600 mb-0.5">Department:</p>
+    <p className="font-semibold text-gray-900">{ticket.department || 'IT Team'}</p>
+  </div>
+</div>
 
-Example:
-- Issue identified and being investigated
-- Waiting for user response
-- Solution implemented, monitoring for 24 hours
-- etc."
-          />
-          <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-            </svg>
-            This information will be visible to all team members
-          </p>
-        </div>
+            {/* Ticket Details (Read-Only) */}
+            {ticket.ticketDetails && (
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Ticket Details (Original Request)
+                </label>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{ticket.ticketDetails}</p>
+                </div>
+              </div>
+            )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
-          <button
-            onClick={onClose}
-            className="px-6 py-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-all font-medium"
-            disabled={saving}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg shadow-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Save className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
+            {/* Status Details / Remarks (Editable) */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Status Details / Remarks
+              </label>
+              <textarea
+                value={statusDetails}
+                onChange={(e) => setStatusDetails(e.target.value)}
+                placeholder="Enter status details, remarks, or updates...&#10;&#10;Example:&#10;- Issue identified and being investigated&#10;- Waiting for user response&#10;- Solution implemented, monitoring for 24 hours&#10;- etc."
+                className="w-full h-48 px-4 py-3 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+              />
+              <div className="flex items-start gap-2 mt-2 text-xs text-gray-500">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <p>This information will be visible to all team members</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="bg-gray-50 px-6 py-4 rounded-b-2xl flex items-center justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-5 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

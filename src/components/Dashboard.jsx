@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useMsal } from '@azure/msal-react';
-import { Bell, Calendar, TrendingUp, Clock, Edit3, CheckCircle, AlertCircle, Menu, X, RefreshCw, FileText, Filter } from 'lucide-react';
+import { Bell, Calendar, TrendingUp, Clock, Edit3, CheckCircle, AlertCircle, Menu, X, RefreshCw, FileText, Filter, Download } from 'lucide-react';
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Legend } from 'recharts';
 import { format, subDays } from 'date-fns';
 import toast, { Toaster } from 'react-hot-toast';
@@ -37,19 +37,25 @@ const Dashboard = ({ department }) => {
   const [showFilters, setShowFilters] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   
-  // Filters - Default to CURRENT MONTH
-  const [startDate, setStartDate] = useState(() => {
-    const now = new Date();
-    return format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
-  });
-  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [statusFilter, setStatusFilter] = useState('All');
+ // Filters - Default to CURRENT MONTH
+const [startDate, setStartDate] = useState(() => {
+  const now = new Date();
+  return format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+});
+const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+const [statusFilter, setStatusFilter] = useState('All');
+const statusFilterRef = useRef(statusFilter);
 
-  // Modal state
-  const [statusDetailsModal, setStatusDetailsModal] = useState({
-    isOpen: false,
-    ticket: null
-  });
+// Sync ref with state
+useEffect(() => {
+  statusFilterRef.current = statusFilter;
+}, [statusFilter]);
+
+// Modal state
+const [statusDetailsModal, setStatusDetailsModal] = useState({
+  isOpen: false,
+  ticket: null
+});
 
   // Stats
   const [stats, setStats] = useState({
@@ -58,6 +64,7 @@ const Dashboard = ({ department }) => {
     pending: 0,
     open: 0,
     inProgress: 0,
+    onHold: 0,
     closed: 0,
     avgResolution: '0',
     byPriority: [],
@@ -77,30 +84,40 @@ const Dashboard = ({ department }) => {
 
       sharepointService.setAccessToken(tokenResponse.accessToken);
 
-      const data = await sharepointService.getTickets({
-        department: department,
-        startDate: startDate,
-        endDate: endDate
-      });
+const allData = await sharepointService.getTickets({
+  department: department,
+  startDate: null,
+  endDate: null
+});
 
-      const previousCount = tickets.length;
-      const newCount = data.length;
+const previousCount = tickets.length;
+const newCount = allData.length;
 
-      setTickets(data);
-      
-      // Apply status filter
-      applyStatusFilter(data, statusFilter);
+setTickets(allData);
 
-      if (newCount > previousCount && previousCount > 0) {
-        const diff = newCount - previousCount;
-        setNewTicketCount(diff);
-        toast.success(`${diff} new ticket${diff > 1 ? 's' : ''} added!`);
-      }
 
-      const calculatedStats = calculateStats(data);
-      setStats(calculatedStats);
-      setLoading(false);
-      setRefreshing(false);
+// Apply status filter to list (shows ALL history)
+applyStatusFilter(allData, statusFilterRef.current);
+
+if (newCount > previousCount && previousCount > 0) {
+  const diff = newCount - previousCount;
+  setNewTicketCount(diff);
+  toast.success(`${diff} new ticket${diff > 1 ? 's' : ''} added!`);
+}
+
+// Filter data by dates for charts/cards ONLY
+const dateFilteredData = allData.filter(t => {
+  const ticketDate = new Date(t.createdDate);
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59);
+  return ticketDate >= start && ticketDate <= end;
+});
+
+const calculatedStats = calculateStats(dateFilteredData);
+setStats(calculatedStats);
+setLoading(false);
+setRefreshing(false);
     } catch (error) {
       console.error('Error:', error);
       toast.error('Failed to load tickets');
@@ -109,37 +126,68 @@ const Dashboard = ({ department }) => {
     }
   };
 
-  // Apply status filter
-  const applyStatusFilter = (data, filter) => {
-    if (filter === 'All') {
-      setFilteredTickets(data);
-    } else {
-      const filtered = data.filter(t => {
-        const status = t.status?.toLowerCase() || '';
-        const filterLower = filter.toLowerCase();
-        
-        if (filterLower === 'in progress') {
-          return status === 'in progress' || status === 'in-progress';
-        }
-        return status === filterLower;
-      });
-      setFilteredTickets(filtered);
-    }
+  // Calculate TAT (Turn Around Time) for a ticket - HOURS ONLY
+  const calculateTAT = (ticket) => {
+    const created = new Date(ticket.createdDate);
+    const endTime = (ticket.status === 'Resolved' || ticket.status === 'Closed') 
+      ? new Date(ticket.modifiedDate) 
+      : new Date();
+    
+    const diffMs = endTime - created;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    
+    return `${diffHours}h`;
   };
 
-  // Handle status filter change
-  const handleStatusFilterChange = (newFilter) => {
-    setStatusFilter(newFilter);
-    applyStatusFilter(tickets, newFilter);
+  // Get TAT color based on time elapsed
+  const getTATColor = (ticket) => {
+    const created = new Date(ticket.createdDate);
+    const endTime = (ticket.status === 'Resolved' || ticket.status === 'Closed') 
+      ? new Date(ticket.modifiedDate) 
+      : new Date();
+    
+    const diffHours = Math.floor((endTime - created) / (1000 * 60 * 60));
+    
+    // Green: < 24 hours
+    if (diffHours < 24) return 'text-green-600 bg-green-50';
+    // Yellow: 24-48 hours
+    if (diffHours < 48) return 'text-yellow-600 bg-yellow-50';
+    // Orange: 48-72 hours
+    if (diffHours < 72) return 'text-orange-600 bg-orange-50';
+    // Red: > 72 hours
+    return 'text-red-600 bg-red-50';
   };
 
-  useEffect(() => {
-    if (accounts.length > 0) {
-      fetchData();
-      const interval = setInterval(() => fetchData(false), 30000);
-      return () => clearInterval(interval);
-    }
-  }, [accounts, startDate, endDate, department]);
+const applyStatusFilter = (data, filter) => {
+  if (filter === 'All') {
+    setFilteredTickets(data);
+  } else {
+    const filtered = data.filter(t => {
+      // Handle "In-progress" to match both variations
+      if (filter === 'In-progress') {
+        return t.status === 'In-progress' || t.status === 'In Progress';
+      }
+      // Exact match for others
+      return t.status === filter;
+    });
+    setFilteredTickets(filtered);
+  }
+};
+
+ // Handle status filter change
+const handleStatusFilterChange = (newFilter) => {
+  setStatusFilter(newFilter);
+  statusFilterRef.current = newFilter; // Update ref immediately
+  applyStatusFilter(tickets, newFilter);
+};
+
+useEffect(() => {
+  if (accounts.length > 0) {
+    fetchData();
+    const interval = setInterval(() => fetchData(false), 30000);
+    return () => clearInterval(interval);
+  }
+}, [accounts, startDate, endDate, department]);
 
   // Calculate statistics with status breakdown
   const calculateStats = (data) => {
@@ -158,9 +206,14 @@ const Dashboard = ({ department }) => {
       return status === 'open';
     }).length;
 
-    const inProgressCount = data.filter(t => {
+const inProgressCount = data.filter(t => {
+  const status = t.status || '';
+  return status === 'In-progress' || status === 'In Progress';
+}).length;
+
+    const onHoldCount = data.filter(t => {
       const status = t.status?.toLowerCase() || '';
-      return status === 'in progress' || status === 'in-progress';
+      return status === 'on-hold';
     }).length;
 
     const closedCount = data.filter(t => {
@@ -205,6 +258,7 @@ const Dashboard = ({ department }) => {
       pending: pendingCount,
       open: openCount,
       inProgress: inProgressCount,
+      onHold: onHoldCount,
       closed: closedCount,
       avgResolution,
       byPriority,
@@ -242,10 +296,12 @@ const Dashboard = ({ department }) => {
   const getStatusColor = (status) => {
     const lower = status?.toLowerCase() || '';
     if (lower === 'resolved') return 'bg-green-100 text-green-800';
-    if (lower === 'in progress' || lower === 'in-progress') return 'bg-orange-100 text-orange-800';
+    if (lower === 'in-progress') return 'bg-orange-100 text-orange-800';
     if (lower === 'pending') return 'bg-purple-100 text-purple-800';
+    if (lower === 'on-hold') return 'bg-yellow-100 text-yellow-800';
     if (lower === 'open' || lower === 'new') return 'bg-blue-100 text-blue-800';
     if (lower === 'closed') return 'bg-gray-100 text-gray-800';
+    if (lower === 'closed-wrong dept.') return 'bg-gray-100 text-gray-800';
     if (lower.includes('partially')) return 'bg-purple-100 text-purple-800';
     return 'bg-gray-100 text-gray-800';
   };
@@ -256,6 +312,38 @@ const Dashboard = ({ department }) => {
     if (priority === 'Low') return 'bg-green-100 text-green-800';
     return 'bg-yellow-100 text-yellow-800';
   };
+
+  // Download CSV function
+const downloadCSV = () => {
+  const headers = ['ID', 'Ticket', 'Reason', 'Priority', 'Status', 'Status Details', 'Raised By', 'TAT', 'Date'];
+  
+  const rows = filteredTickets.map(ticket => [
+    ticket.ticketId,
+    `"${ticket.ticketTitle.replace(/"/g, '""')}"`,
+    `"${ticket.ticketReason.replace(/"/g, '""')}"`,
+    ticket.priority,
+    ticket.status,
+    `"${(ticket.statusDetails || '').replace(/"/g, '""')}"`,
+    ticket.ticketRaisedBy,
+    calculateTAT(ticket),
+    format(new Date(ticket.createdDate), 'dd-MM-yyyy')
+  ]);
+  
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(row => row.join(','))
+  ].join('\n');
+  
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `tickets_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
 
   if (loading) {
     return (
@@ -316,18 +404,7 @@ const Dashboard = ({ department }) => {
                 />
               </div>
 
-              {/* Status Filter */}
-              <select
-                value={statusFilter}
-                onChange={(e) => handleStatusFilterChange(e.target.value)}
-                className="text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="All">All Statuses</option>
-                <option value="New">New</option>
-                <option value="Open">Open</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Resolved">Resolved</option>
-              </select>
+
             </div>
 
             {/* RIGHT: User + Actions */}
@@ -395,9 +472,11 @@ const Dashboard = ({ department }) => {
               >
                 <option value="All">All Statuses</option>
                 <option value="New">New</option>
-                <option value="Open">Open</option>
-                <option value="In Progress">In Progress</option>
+                <option value="In-progress">In-progress</option>
+                <option value="On-Hold">On-Hold</option>
                 <option value="Resolved">Resolved</option>
+                <option value="Partially Resolved - Under Observation">Partially Resolved - Under Observation</option>
+                <option value="Closed-Wrong Dept.">Closed-Wrong Dept.</option>
               </select>
             </div>
           )}
@@ -407,14 +486,14 @@ const Dashboard = ({ department }) => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {/* Executive Stats Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-          {[
-            { label: 'Total', value: stats.total, icon: TrendingUp, color: 'from-slate-500 to-slate-600', filter: 'All' },
-            { label: 'Resolved', value: stats.resolved, icon: CheckCircle, color: 'from-green-500 to-emerald-600', filter: 'Resolved' },
-            { label: 'New', value: stats.pending, icon: AlertCircle, color: 'from-blue-500 to-cyan-600', filter: 'New' },
-            { label: 'Open', value: stats.open, icon: FileText, color: 'from-sky-500 to-blue-600', filter: 'Open' },
-            { label: 'In Progress', value: stats.inProgress, icon: Clock, color: 'from-orange-500 to-amber-600', filter: 'In Progress' },
-            { label: 'Avg Time', value: `${stats.avgResolution}h`, icon: Clock, color: 'from-violet-500 to-purple-600', filter: null },
-          ].map((stat, index) => (
+         {[
+  { label: 'Total', value: stats.total, icon: TrendingUp, color: 'from-slate-500 to-slate-600', filter: 'All' },
+  { label: 'New', value: stats.pending, icon: AlertCircle, color: 'from-blue-500 to-cyan-600', filter: 'New' },
+  { label: 'In Progress', value: stats.inProgress, icon: Clock, color: 'from-orange-500 to-amber-600', filter: 'In-progress' },
+  { label: 'On-Hold', value: stats.onHold, icon: FileText, color: 'from-yellow-500 to-orange-600', filter: 'On-Hold' },
+  { label: 'Resolved', value: stats.resolved, icon: CheckCircle, color: 'from-green-500 to-emerald-600', filter: 'Resolved' },
+  { label: 'Avg Time', value: `${stats.avgResolution}h`, icon: Clock, color: 'from-violet-500 to-purple-600', filter: null },
+].map((stat, index) => (  
             <div
               key={index}
               onClick={() => stat.filter && handleStatusFilterChange(stat.filter)}
@@ -486,21 +565,43 @@ const Dashboard = ({ department }) => {
           </div>
         </div>
 
-        {/* Tickets List */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">
-              {statusFilter === 'All' ? 'Recent Tickets' : `${statusFilter} Tickets`}
-            </h2>
-            <span className="bg-indigo-100 text-indigo-800 text-sm font-medium px-3 py-1 rounded-full">
-              {filteredTickets.length}
-            </span>
-          </div>
+   {/* Tickets List */}
+<div className="bg-white rounded-xl shadow-sm border border-gray-200">
+<div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+  <h2 className="text-lg font-bold text-gray-800">
+    {statusFilter === 'All' ? 'All Tickets' : `${statusFilter} Tickets`}
+  </h2>
+  <div className="flex items-center gap-3">
+    <span className="bg-indigo-100 text-indigo-800 text-sm font-medium px-3 py-1 rounded-full">
+      {filteredTickets.length}
+    </span>
+    <select
+      value={statusFilter}
+      onChange={(e) => handleStatusFilterChange(e.target.value)}
+      className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+    >
+      <option value="All">All Statuses</option>
+      <option value="New">New</option>
+      <option value="In-progress">In-progress</option>
+      <option value="On-Hold">On-Hold</option>
+      <option value="Resolved">Resolved</option>
+      <option value="Partially Resolved - Under Observation">Partially Resolved</option>
+      <option value="Closed-Wrong Dept.">Closed-Wrong Dept.</option>
+    </select>
+    <button
+      onClick={downloadCSV}
+      className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+    >
+      <Download className="w-4 h-4" />
+      Download CSV
+    </button>
+  </div>
+</div>
 
           {/* Desktop Table */}
           <div className="hidden lg:block overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border-b-2 border-indigo-200">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ticket</th>
@@ -509,6 +610,7 @@ const Dashboard = ({ department }) => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status Details</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Raised By</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">TAT</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
                 </tr>
               </thead>
@@ -536,12 +638,11 @@ const Dashboard = ({ department }) => {
                         className={`text-sm px-3 py-1.5 rounded-full font-medium border-0 focus:ring-2 focus:ring-indigo-500 cursor-pointer ${getStatusColor(ticket.status)}`}
                       >
                         <option value="New">New</option>
-                        <option value="Open">Open</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Pending">Pending</option>
-                        <option value="Partially Resolved - Under Observation">Partially Resolved</option>
+                        <option value="In-progress">In-progress</option>
+                        <option value="On-Hold">On-Hold</option>
                         <option value="Resolved">Resolved</option>
-                        <option value="Closed">Closed</option>
+                        <option value="Partially Resolved - Under Observation">Partially Resolved - Under Observation</option>
+                        <option value="Closed-Wrong Dept.">Closed-Wrong Dept.</option>
                       </select>
                     </td>
                     <td className="px-6 py-4">
@@ -559,6 +660,11 @@ const Dashboard = ({ department }) => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{ticket.ticketRaisedBy}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getTATColor(ticket)}`}>
+                        {calculateTAT(ticket)}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {format(new Date(ticket.createdDate), 'dd-MM-yyyy')}
@@ -601,6 +707,13 @@ const Dashboard = ({ department }) => {
                   <span className="text-gray-700">{format(new Date(ticket.createdDate), 'dd-MM-yyyy')}</span>
                 </div>
 
+                <div className="flex items-center justify-between text-sm mb-3">
+                  <span className="text-gray-500">TAT:</span>
+                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getTATColor(ticket)}`}>
+                    {calculateTAT(ticket)}
+                  </span>
+                </div>
+
                 <div className="mb-3">
                   <select
                     value={ticket.status}
@@ -608,12 +721,11 @@ const Dashboard = ({ department }) => {
                     className={`w-full text-sm px-3 py-2 rounded-lg font-medium border-0 focus:ring-2 focus:ring-indigo-500 ${getStatusColor(ticket.status)}`}
                   >
                     <option value="New">New</option>
-                    <option value="Open">Open</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Pending">Pending</option>
-                    <option value="Partially Resolved - Under Observation">Partially Resolved</option>
+                    <option value="In-progress">In-progress</option>
+                    <option value="On-Hold">On-Hold</option>
                     <option value="Resolved">Resolved</option>
-                    <option value="Closed">Closed</option>
+                    <option value="Partially Resolved - Under Observation">Partially Resolved - Under Observation</option>
+                    <option value="Closed-Wrong Dept.">Closed-Wrong Dept.</option>
                   </select>
                 </div>
 

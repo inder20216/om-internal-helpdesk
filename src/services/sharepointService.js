@@ -167,9 +167,12 @@ class SharePointService {
         const ticketId = fields.TicketID || fields.Ticket_x0020_ID || '';
         const ticketTitle = fields.TicketTitle || fields.Ticket_x0020_Title || fields.Title || '';
         const ticketReason = fields.TicketReason || fields.Ticket_x0020_Reason || '';
+        const ticketDetails = fields.TicketDetails || fields.Ticket_x0020_Details || '';
         const statusDetails = fields.StatusDetails || fields.Status_x0020_Details || '';
         
-        return {
+
+
+return {
           id: item.id,
           title: fields.Title,
           ticketTitle: ticketTitle,
@@ -177,6 +180,7 @@ class SharePointService {
           createdDate: fields.Created || item.createdDateTime,
           department: fields.Department,
           ticketReason: ticketReason,
+          ticketDetails: ticketDetails,
           ticketRaisedBy: ticketRaisedBy,
           priority: fields.Priority,
           status: fields.Status,
@@ -186,12 +190,13 @@ class SharePointService {
         };
       });
 
-      let filteredTickets = tickets;
+let filteredTickets = tickets;
       
       if (filters.department) {
         filteredTickets = filteredTickets.filter(t => t.department === filters.department);
       }
 
+      // Only apply date filters if they are provided (not null)
       if (filters.startDate) {
         const startDate = new Date(filters.startDate);
         filteredTickets = filteredTickets.filter(t => new Date(t.createdDate) >= startDate);
