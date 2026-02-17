@@ -169,7 +169,7 @@ class SharePointService {
         const ticketReason = fields.TicketReason || fields.Ticket_x0020_Reason || '';
         const ticketDetails = fields.TicketDetails || fields.Ticket_x0020_Details || '';
         const statusDetails = fields.StatusDetails || fields.Status_x0020_Details || '';
-        
+        const processName = fields.ProcessName || fields.Process_x0020_Name || '';
 
 
 return {
@@ -185,6 +185,7 @@ return {
           priority: fields.Priority,
           status: fields.Status,
           statusDetails: statusDetails,
+          processName: processName,
           modifiedDate: fields.Modified || item.lastModifiedDateTime,
           authorLookupId: fields.AuthorLookupId
         };

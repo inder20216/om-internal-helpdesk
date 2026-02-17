@@ -69,7 +69,8 @@ const [statusDetailsModal, setStatusDetailsModal] = useState({
     avgResolution: '0',
     byPriority: [],
     byStatus: [],
-    byReason: []
+    byReason: [],
+    byProcess: []
   });
 
   // Fetch data
@@ -250,6 +251,18 @@ const inProgressCount = data.filter(t => {
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
 
+    // Group by process name
+    const processGroups = {};
+    data.forEach(ticket => {
+      if (ticket.processName && ticket.processName.trim()) {
+        const process = ticket.processName.trim();
+        processGroups[process] = (processGroups[process] || 0) + 1;
+      }
+    });
+    const byProcess = Object.entries(processGroups)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
     const avgResolution = sharepointService.calculateAvgResolutionTime(data);
 
     return {
@@ -263,7 +276,8 @@ const inProgressCount = data.filter(t => {
       avgResolution,
       byPriority,
       byStatus,
-      byReason
+      byReason,
+      byProcess
     };
   };
 
@@ -564,6 +578,36 @@ const downloadCSV = () => {
             </ResponsiveContainer>
           </div>
         </div>
+
+        {/* Process-wise Tickets Chart */}
+        {stats.byProcess.length > 0 && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Process-wise Tickets</h3>
+            <ResponsiveContainer width="100%" height={380}>
+              <BarChart data={stats.byProcess} margin={{ bottom: 140, left: 10, right: 10, top: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis
+                  dataKey="name"
+                  angle={-50}
+                  textAnchor="end"
+                  height={120}
+                  interval={0}
+                  tick={{ fontSize: 9, fill: '#374151' }}
+                />
+                <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '12px' }}
+                  labelStyle={{ fontWeight: 600, color: '#111827' }}
+                />
+                <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]}>
+                  {stats.byProcess.map((entry, index) => (
+                    <Cell key={`process-${index}`} fill={COLORS.chart[index % COLORS.chart.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
    {/* Tickets List */}
 <div className="bg-white rounded-xl shadow-sm border border-gray-200">
